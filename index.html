@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1e293b">
+<title>מאגר תיבות ארכיון</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+  :root{
+    --bg:#0f172a; --card:#1e293b; --card2:#273449; --text:#f1f5f9; --muted:#94a3b8;
+    --accent:#3b82f6; --green:#16a34a; --green-bg:#052e16; --red:#dc2626; --red-bg:#450a0a;
+    --border:#334155;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:"Segoe UI",Arial,sans-serif;min-height:100vh;}
+  body{padding:16px;padding-bottom:40px;}
+  h1{font-size:1.3rem;text-align:center;margin:8px 0 16px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:16px;margin-bottom:16px;}
+  .status-line{font-size:0.9rem;color:var(--muted);text-align:center;margin-top:8px;}
+  .status-line b{color:var(--text);}
+  label{display:block;font-size:0.95rem;color:var(--muted);margin-bottom:6px;}
+  input[type=text],input[type=number]{
+    width:100%;padding:16px;font-size:1.4rem;border-radius:10px;border:1px solid var(--border);
+    background:var(--card2);color:var(--text);text-align:center;margin-bottom:14px;
+  }
+  input:focus{outline:2px solid var(--accent);}
+  button{
+    width:100%;padding:16px;font-size:1.15rem;font-weight:600;border:none;border-radius:10px;
+    background:var(--accent);color:#fff;cursor:pointer;
+  }
+  button:active{opacity:0.85;}
+  .upload-btn{background:var(--card2);border:1px dashed var(--border);color:var(--text);
+    font-weight:400;font-size:0.95rem;padding:14px;}
+  #fileInput{display:none;}
+  #result{margin-top:16px;border-radius:14px;padding:22px 16px;text-align:center;
+    display:none;}
+  #result.found-active{display:block;background:var(--green-bg);border:1px solid var(--green);}
+  #result.found-shredded{display:block;background:var(--red-bg);border:1px solid var(--red);}
+  #result.not-found{display:block;background:var(--card2);border:1px solid var(--border);}
+  #result .title{font-size:1.4rem;font-weight:700;margin-bottom:8px;}
+  #result .sub{font-size:1rem;color:var(--muted);}
+  .found-active .title{color:#4ade80;}
+  .found-shredded .title{color:#f87171;}
+  .not-found .title{color:var(--muted);}
+  .clear-btn{background:transparent;border:1px solid var(--border);color:var(--muted);
+    margin-top:10px;font-size:0.9rem;padding:10px;}
+</style>
+</head>
+<body>
+
+<h1>📦 מאגר תיבות ארכיון</h1>
+
+<div class="card">
+  <label for="fileInput" style="cursor:pointer;">
+    <div class="upload-btn" style="text-align:center;">⬆️ טעינת / עדכון קובץ אקסל</div>
+  </label>
+  <input type="file" id="fileInput" accept=".xlsx,.xls">
+  <div class="status-line" id="dataStatus">לא נטען מאגר עדיין</div>
+</div>
+
+<div class="card">
+  <label for="customerInput">מספר לקוח</label>
+  <input type="text" inputmode="numeric" id="customerInput" placeholder="הקלד מספר לקוח" autocomplete="off">
+
+  <label for="boxInput">מספר תיבה</label>
+  <input type="text" inputmode="numeric" id="boxInput" placeholder="הקלד מספר תיבה" autocomplete="off">
+
+  <button id="checkBtn">🔍 בדוק תיבה</button>
+
+  <div id="result"></div>
+</div>
+
+<script src="xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
