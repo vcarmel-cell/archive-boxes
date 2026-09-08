@@ -1,4 +1,4 @@
-var CACHE_NAME = 'archive-boxes-v2';
+var CACHE_NAME = 'archive-boxes-v3';
 var ASSETS = [
   './',
   './index.html',
