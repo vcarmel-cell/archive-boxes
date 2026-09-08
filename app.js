@@ -149,7 +149,7 @@
       return;
     }
     if (match.shredded){
-      showResult('found-shredded', '✗ התיבה נגרסה',
+      showResult('found-shredded', '✗ תיבה לגריסה',
         match.shredDate ? 'תאריך גריסה: ' + formatDate(match.shredDate) : '');
     } else {
       showResult('found-active', '✔ התיבה פעילה במאגר',
