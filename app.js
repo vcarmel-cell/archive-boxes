@@ -1,10 +1,12 @@
 (function(){
   'use strict';
 
-  var DB_NAME = 'archiveBoxesDB';
+  var DB_NAME = 'archiveBoxesDB2';
   var DB_VERSION = 1;
-  var STORE_NAME = 'store';
-  var DATA_KEY = 'archiveData';
+  var RECORDS_STORE = 'records';
+  var META_STORE = 'meta';
+  var META_KEY = 'info';
+  var BATCH_SIZE = 2000;
 
   var fileInput = document.getElementById('fileInput');
   var dataStatus = document.getElementById('dataStatus');
@@ -21,9 +23,12 @@
     shredded: ["נגרס"]
   };
 
-  // In-memory cache so repeated searches don't re-read IndexedDB every time.
-  var cachedPayload = null; // { records, filename, updatedAt }
-  var cachedIndex = null;   // Map "customer|box" -> record
+  // Small metadata cache only (filename / updatedAt / count) - the records
+  // themselves stay in IndexedDB and are looked up by key, never held in bulk
+  // in memory. This avoids Safari/iOS's QuotaExceededError, which happens
+  // when a single IndexedDB value is one huge array of many records - even
+  // when the actual data size is well within the device's free storage.
+  var cachedMeta = null;
 
   function norm(v){
     if (v === null || v === undefined) return '';
@@ -76,77 +81,96 @@
     }).filter(function(r){ return r.customer !== '' && r.box !== ''; });
   }
 
-  // --- IndexedDB storage (handles far more data than localStorage's ~5-10MB cap) ---
+  // --- IndexedDB storage: one small row per box, not one giant array ---
 
   function openDB(){
     return new Promise(function(resolve, reject){
       var req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = function(){
-        req.result.createObjectStore(STORE_NAME);
+        var db = req.result;
+        if (!db.objectStoreNames.contains(RECORDS_STORE)) db.createObjectStore(RECORDS_STORE);
+        if (!db.objectStoreNames.contains(META_STORE)) db.createObjectStore(META_STORE);
       };
       req.onsuccess = function(){ resolve(req.result); };
       req.onerror = function(){ reject(req.error); };
     });
   }
 
-  function idbPut(key, value){
+  function runTx(storeName, mode, fn){
     return openDB().then(function(db){
       return new Promise(function(resolve, reject){
-        var tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).put(value, key);
-        tx.oncomplete = function(){ resolve(); };
+        var tx = db.transaction(storeName, mode);
+        var store = tx.objectStore(storeName);
+        var result = fn(store);
+        tx.oncomplete = function(){ resolve(result); };
         tx.onerror = function(){ reject(tx.error); };
+        tx.onabort = function(){ reject(tx.error || new Error('Transaction aborted')); };
       });
     });
   }
 
-  function idbGet(key){
-    return openDB().then(function(db){
-      return new Promise(function(resolve, reject){
-        var tx = db.transaction(STORE_NAME, 'readonly');
-        var req = tx.objectStore(STORE_NAME).get(key);
-        req.onsuccess = function(){ resolve(req.result || null); };
-        req.onerror = function(){ reject(req.error); };
+  function clearStore(storeName){
+    return runTx(storeName, 'readwrite', function(store){ store.clear(); });
+  }
+
+  function putBatch(records, startIdx, endIdx){
+    return runTx(RECORDS_STORE, 'readwrite', function(store){
+      for (var i = startIdx; i < endIdx; i++){
+        var r = records[i];
+        store.put(r, r.customer + '|' + r.box);
+      }
+    });
+  }
+
+  function saveData(records, filename, onProgress){
+    return clearStore(RECORDS_STORE).then(function(){
+      var i = 0;
+      function next(){
+        if (i >= records.length) return Promise.resolve();
+        var end = Math.min(i + BATCH_SIZE, records.length);
+        return putBatch(records, i, end).then(function(){
+          i = end;
+          if (onProgress) onProgress(i, records.length);
+          return next();
+        });
+      }
+      return next();
+    }).then(function(){
+      var meta = { filename: filename || '', updatedAt: new Date(), count: records.length };
+      return runTx(META_STORE, 'readwrite', function(store){
+        store.put(meta, META_KEY);
+      }).then(function(){
+        cachedMeta = meta;
+        return meta;
       });
     });
   }
 
-  function buildIndex(records){
-    var map = new Map();
-    for (var i = 0; i < records.length; i++){
-      var r = records[i];
-      map.set(r.customer + '|' + r.box, r);
-    }
-    return map;
+  function getRecord(customer, box){
+    return runTx(RECORDS_STORE, 'readonly', function(store){
+      return store.get(customer + '|' + box);
+    }).then(function(req){ return req.result; });
   }
 
-  function saveData(records, filename){
-    var payload = { records: records, filename: filename || '', updatedAt: new Date() };
-    return idbPut(DATA_KEY, payload).then(function(){
-      cachedPayload = payload;
-      cachedIndex = buildIndex(records);
-      return payload;
+  function loadMeta(){
+    if (cachedMeta) return Promise.resolve(cachedMeta);
+    return runTx(META_STORE, 'readonly', function(store){
+      return store.get(META_KEY);
+    }).then(function(req){
+      cachedMeta = req.result || null;
+      return cachedMeta;
     });
   }
 
-  function ensureLoaded(){
-    if (cachedPayload) return Promise.resolve(cachedPayload);
-    return idbGet(DATA_KEY).then(function(payload){
-      cachedPayload = payload;
-      cachedIndex = payload ? buildIndex(payload.records) : null;
-      return payload;
-    });
-  }
-
-  function renderStatus(payload){
-    if (!payload || !payload.records || !payload.records.length){
+  function renderStatus(meta){
+    if (!meta || !meta.count){
       dataStatus.textContent = 'לא נטען מאגר עדיין';
       return;
     }
-    var d = new Date(payload.updatedAt);
+    var d = new Date(meta.updatedAt);
     dataStatus.innerHTML = 'המאגר עודכן: <b>' + d.toLocaleDateString('he-IL') + ' ' +
       d.toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'}) + '</b>' +
-      ' &nbsp;|&nbsp; <b>' + payload.records.length + '</b> תיבות';
+      ' &nbsp;|&nbsp; <b>' + meta.count + '</b> תיבות';
   }
 
   fileInput.addEventListener('change', function(e){
@@ -161,19 +185,21 @@
         var records = parseWorkbook(workbook);
         if (!records.length){
           alert('לא נמצאו רשומות תקינות בקובץ. ודא שהעמודות תואמות (מס\' לקוח, מס\' תיבה לקוח, תאריך הכנסה, תאריך גריסה, נגרס).');
-          renderStatus(cachedPayload);
+          renderStatus(cachedMeta);
           return;
         }
-        saveData(records, file.name).then(function(payload){
-          renderStatus(payload);
+        saveData(records, file.name, function(done, total){
+          dataStatus.textContent = 'שומר במאגר... ' + done + ' מתוך ' + total;
+        }).then(function(meta){
+          renderStatus(meta);
           alert('נטענו ' + records.length + ' תיבות בהצלחה.');
         }).catch(function(err){
           alert('שגיאה בשמירת הנתונים: ' + err.message);
-          renderStatus(cachedPayload);
+          renderStatus(cachedMeta);
         });
       } catch (err){
         alert('שגיאה בקריאת הקובץ: ' + err.message);
-        renderStatus(cachedPayload);
+        renderStatus(cachedMeta);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -186,8 +212,8 @@
   }
 
   function doCheck(){
-    ensureLoaded().then(function(payload){
-      if (!payload || !payload.records.length){
+    loadMeta().then(function(meta){
+      if (!meta || !meta.count){
         showResult('not-found', '⚠️ לא נטען מאגר', 'יש לטעון קודם קובץ אקסל');
         return;
       }
@@ -197,18 +223,19 @@
         showResult('not-found', '⚠️ יש להזין מספר לקוח ומספר תיבה', '');
         return;
       }
-      var match = cachedIndex.get(cust + '|' + box);
-      if (!match){
-        showResult('not-found', '❓ לא נמצאה תיבה כזו', 'בדוק את מספר הלקוח ומספר התיבה');
-        return;
-      }
-      if (match.shredded){
-        showResult('found-shredded', '✗ תיבה לגריסה',
-          match.shredDate ? 'תאריך גריסה: ' + formatDate(match.shredDate) : '');
-      } else {
-        showResult('found-active', '✔ התיבה פעילה במאגר',
-          match.intakeDate ? 'תאריך הכנסה: ' + formatDate(match.intakeDate) : '');
-      }
+      return getRecord(cust, box).then(function(match){
+        if (!match){
+          showResult('not-found', '❓ לא נמצאה תיבה כזו', 'בדוק את מספר הלקוח ומספר התיבה');
+          return;
+        }
+        if (match.shredded){
+          showResult('found-shredded', '✗ תיבה לגריסה',
+            match.shredDate ? 'תאריך גריסה: ' + formatDate(match.shredDate) : '');
+        } else {
+          showResult('found-active', '✔ התיבה פעילה במאגר',
+            match.intakeDate ? 'תאריך הכנסה: ' + formatDate(match.intakeDate) : '');
+        }
+      });
     });
   }
 
@@ -221,7 +248,7 @@
     if (e.key === 'Enter'){ e.preventDefault(); doCheck(); }
   });
 
-  ensureLoaded().then(renderStatus);
+  loadMeta().then(renderStatus);
 
   if ('serviceWorker' in navigator){
     window.addEventListener('load', function(){
